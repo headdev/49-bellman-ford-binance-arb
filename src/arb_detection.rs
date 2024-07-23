@@ -19,6 +19,8 @@ fn calculate_weighted_average_price(
     budget: f64,
     direction: &Direction,
 ) -> Option<(f64, f64, f64)> {
+    let mut left = 0;
+    let mut right = orderbook.len() - 1;
     let mut total_cost = 0.0;
     let mut total_quantity = 0.0;
 
@@ -126,14 +128,24 @@ where T: BellmanFordEx + ExchangeData + ApiCalls
     // Guard: Ensure cycle
     if cycle.len() == 0 { return None };
 
-    // Guard: Ensure asset holding
+    
+    /*/ Guard: Ensure asset holding
     let from = cycle[0].from.as_str();
     if !ASSET_HOLDINGS.contains(&from) {
         // eprintln!("Asset not in holding: {}", from);
         return None
-    }
+    } */
+
+    for edge in cycle {
+        if !ASSET_HOLDINGS.contains(&edge.from.as_str()) || !ASSET_HOLDINGS.contains(&edge.to.as_str()) {
+            continue;
+        }
+    } 
+
+    
 
     // Get starting budget
+    let from = cycle[0].from.as_str();
     let budget = match from {
         "BTC" => USD_BUDGET / exchange.prices().get("BTCUSDT").expect("Expected price for BTCUSDT").to_owned(),
         "ETH" => USD_BUDGET / exchange.prices().get("ETHUSDT").expect("Expected price for ETHUSDT").to_owned(),
@@ -284,6 +296,26 @@ pub async fn arb_scanner() -> Result<(), SmartError> {
                 dbg!(&arb_rate);
                 if arb_rate < MIN_ARB_THRESH { continue; }
 
+             // Print cycle details
+             println!("\nCycle Details:");
+             println!("Arbitrage Rate: {}", arb_rate);
+             println!("Budget: {}", budget);
+             println!("Cycle:");
+             for (i, edge) in cycle.iter().enumerate() {
+                 println!("  Edge {}: {} -> {}", i + 1, edge.from, edge.to);
+             }
+             println!("Tokens:");
+             for (i, symbol) in symbols.iter().enumerate() {
+                 let direction = &directions[i];
+                 let (base_asset, quote_asset) = match direction {
+                     Direction::Forward => (cycle[i].from.clone(), cycle[i].to.clone()),
+                     Direction::Reverse => (cycle[i].to.clone(), cycle[i].from.clone()),
+                 };
+                 println!("  Symbol {}: {}", i + 1, symbol);
+                 println!("    Base Asset: {}", base_asset);
+                 println!("    Quote Asset: {}", quote_asset);
+             }
+
                 // Guard: Ensure from asset is ipart of Holding Assets
                 let from_asset = cycle[0].from.as_str();
                 if !ASSET_HOLDINGS.contains(&from_asset) { panic!("Error: Asset holdings do not include symbol") }
@@ -329,7 +361,7 @@ pub async fn arb_scanner() -> Result<(), SmartError> {
         std::thread::sleep(Duration::from_millis(100));
         let exchange = Binance::new().await;
         let symbol: &str = "BTCUSDT";
-        let budget: f64 = 50.0; // USDT
+        let budget: f64 = 1000.0; // USDT
         let direction = Direction::Reverse;
         let orderbook = exchange.get_orderbook_depth(symbol, &direction).await.unwrap();
         let result = calculate_weighted_average_price(&orderbook, budget, &direction);
